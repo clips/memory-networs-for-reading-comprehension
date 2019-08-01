@@ -21,7 +21,9 @@ class N2N(torch.nn.Module):
         self.pretrained_word_embed = args.pretrained_word_embed
         self.freeze_pretrained_word_embed = args.freeze_pretrained_word_embed
         self.word_idx = word_idx
+        self.inv_word_idx = {v: k for k, v in word_idx.items()}
         self.args = args
+        self.output_size = output_size
 
         if self.hops <= 0:
             raise ValueError("Number of hops have to be greater than 0")
@@ -103,7 +105,7 @@ class N2N(torch.nn.Module):
         #self.lin_bn = nn.BatchNorm1d(4*embed_size)
         self.cos = nn.CosineSimilarity(dim=2)
         #self.lin = nn.Linear(embed_size*4, embed_size)
-        self.lin_final = nn.Linear(embed_size*4, output_size)
+        self.lin_final = nn.Linear(embed_size*4+output_size, output_size)
         #self.lin_final = nn.Linear(embed_size, output_size)
         #self.lin_final = nn.Linear(embed_size, vocab_size)
         #self.lin_final.weight = nn.Parameter(self.A1.weight)
@@ -215,10 +217,24 @@ class N2N(torch.nn.Module):
         #u_k = torch.squeeze(o) #+ torch.squeeze(u_k_1)
         #return u_k
         if last_hop:
+
+            # attention feature: one-hot argmax which will be passed to the output layer
+            att_feat = torch.zeros(probabs.size(0), self.output_size, device="cuda")
+            max_win_ids = torch.argmax(probabs, dim=1)  # b*
+            max_wins = trainS[range(probabs.size(0)), max_win_ids]  # b*win_size
+            for b, win in enumerate(max_wins):
+                idx = None
+                for w in win:
+                    if self.inv_word_idx[w.item()].startswith("@entity"):
+                        idx = int(self.inv_word_idx[w.item()][len("@entity"):])
+                        break
+                assert idx is not None
+                att_feat[b, idx] = 1.
+
             if inspect:
-                return torch.cat((o, u_k_1, o+u_k_1, o*u_k_1), dim=1), probabs
+                return torch.cat((o, u_k_1, o+u_k_1, o*u_k_1, att_feat), dim=1), probabs
             else:
-                return torch.cat((o, u_k_1, o+u_k_1, o*u_k_1), dim=1)
+                return torch.cat((o, u_k_1, o+u_k_1, o*u_k_1, att_feat), dim=1)
         else:
             return torch.squeeze(self.G(o)) + torch.squeeze(u_k_1)
 

@@ -248,7 +248,7 @@ def load_clicr_win(fn, ent_setup="ent", remove_notfound=True, max_n_load=None, w
     for c, datum in enumerate(raw[DATA_KEY]):
         doc_txt = datum[DOC_KEY][TITLE_KEY] + "\n" + datum[DOC_KEY][CONTEXT_KEY]
         # keys include values
-        keys, (entity_dict, inv_entity_dict) = prepare_win(doc_txt, win_size=win_size, anonymize=anonymize)  # n_words*d
+        keys, values, (entity_dict, inv_entity_dict) = prepare_win(doc_txt, win_size=win_size, anonymize=anonymize)  # n_words*d
 
         sents = []
         for sent in doc_txt.split("\n"):
@@ -521,7 +521,7 @@ def prepare_win(text, win_size=3, anonymize=False):
         assert len(entity_dict) == len(inv_entity_dict)
     assert len(values) > 0
     assert len(keys) == len(values)
-    return keys, (entity_dict, inv_entity_dict) if anonymize else None
+    return keys, values, (entity_dict, inv_entity_dict) if anonymize else None
 
 
 def prepare_kv_ent_only(text, win_size=3):

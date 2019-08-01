@@ -229,11 +229,34 @@ def print_scores(scores):
             print("{}\t{:.3f}".format(method, score))
 
 
+def maxfreq_cand_baseline(dataset, downcase):
+    def maxfreq_concept(inst):
+        concept_counts = count_concepts(inst)
+        for cand, _ in concept_counts.most_common():
+            if cand in inst[3]:
+                return cand
+
+    def count_concepts(inst):
+        passage_toks = " ".join(inst[0]).split()
+        c = Counter(passage_toks)
+
+        return c
+
+    insts = read_cbt(dataset, lowercase=downcase)
+    predictions = {}
+    for i, inst in enumerate(insts):
+        id = i
+        # query = qa[QUERY_KEY]
+        predictions[id] = maxfreq_concept(inst)
+
+    return predictions
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         description='Apply some simple baselines.')
     parser.add_argument('-test_file',
-                        default='/mnt/b5320167-5dbd-4498-bf34-173ac5338c8d/Datasets/CBTest/data/cbtest_P_test_2500ex.txt')
+                        default='/mnt/b5320167-5dbd-4498-bf34-173ac5338c8d/Datasets/CBTest/data/cbtest_V_test_2500ex.txt')
     parser.add_argument('-embeddings_file', help='Embeddings in w2v txt format.',
                         default='/mnt/b5320167-5dbd-4498-bf34-173ac5338c8d/Datasets/news_embs/embs/1/embeddings')
     parser.add_argument('-downcase',
@@ -246,11 +269,15 @@ if __name__ == '__main__':
     print(args.embeddings_file)
 
     print("Obtaining baseline predictions...")
+    predictions_maxfreq_cand = maxfreq_cand_baseline(args.test_file, args.downcase)
+    print("max-freq OK")
+    scores_maxfreq_cand = evaluate(args.test_file, predictions_maxfreq_cand)
+    print("\nmax-freq:")
+    print_scores(scores_maxfreq_cand)
+
     predictions_distance_words = distance_baseline(args.test_file, args.embeddings_file, args.downcase,
                                                    vectorize_contexts_of_words, win_size=args.win_size)
     print("sim-entity OK")
-
     scores_distance_words = evaluate(args.test_file, predictions_distance_words)
-
     print("\nsim-entity:")
     print_scores(scores_distance_words)

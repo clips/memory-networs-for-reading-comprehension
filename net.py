@@ -110,7 +110,7 @@ class N2N(torch.nn.Module):
         #self.lin_final_bn = nn.BatchNorm1d(output_size)
         #self.lin_final_bn = nn.BatchNorm1d(vocab_size)
 
-    def forward(self, trainS, trainQ, trainVM, trainPM, trainSM, trainQM, inspect):
+    def forward(self, trainS, trainQ, trainVM, trainPM, trainSM, trainQM, inspect, positional=True):
         """
         :param trainVM: a B*V tensor masking all predictions which are not words/entities in the relevant document
         """
@@ -120,8 +120,11 @@ class N2N(torch.nn.Module):
         queries_emb = self.A1(Q)
         #queries_emb = self.B1(Q)
 
-        position_encoding = get_position_encoding(queries_emb.size(0), queries_emb.size(1), self.embed_size)
-        queries = queries_emb * position_encoding
+        if positional:
+            position_encoding = get_position_encoding(queries_emb.size(0), queries_emb.size(1), self.embed_size)
+            queries = queries_emb * position_encoding
+        else:
+            queries = queries_emb
         # zero out the masked (padded) word embeddings:
         queries = queries * trainQM.unsqueeze(2).expand_as(queries)
 
@@ -134,18 +137,18 @@ class N2N(torch.nn.Module):
             normalizer[normalizer==0.] = float("Inf")
             queries_rep = queries_rep / normalizer
         if inspect:
-            w_u, att_probs = self.hop(S, queries_rep, self.A1, self.A2, trainPM, trainSM, inspect, last_hop=self.hops == 1)  # , self.TA, self.TA2)
+            w_u, att_probs = self.hop(S, queries_rep, self.A1, self.A2, trainPM, trainSM, inspect, last_hop=self.hops == 1, positional=positional)  # , self.TA, self.TA2)
             #w_u, att_probs = self.hop(S, queries_rep, self.A1, self.A1, trainPM, trainSM, inspect)  # , self.TA, self.TA2)
         else:
-            w_u = self.hop(S, queries_rep, self.A1, self.A2, trainPM, trainSM, inspect, last_hop=self.hops == 1)  # , self.TA, self.TA2)
+            w_u = self.hop(S, queries_rep, self.A1, self.A2, trainPM, trainSM, inspect, last_hop=self.hops == 1, positional=positional)  # , self.TA, self.TA2)
             #w_u = self.hop(S, queries_rep, self.A1, self.A1, trainPM, trainSM, inspect)  # , self.TA, self.TA2)
 
         if self.hops >= 2:
             if inspect:
-                w_u, att_probs = self.hop(S, w_u, self.A1, self.A2, trainPM, trainSM, inspect, last_hop=self.hops == 1)  # , self.TA, self.TA3)
+                w_u, att_probs = self.hop(S, w_u, self.A1, self.A2, trainPM, trainSM, inspect, last_hop=self.hops == 1, positional=positional)  # , self.TA, self.TA3)
                 #w_u, att_probs = self.hop(S, w_u, self.A3, self.A3, trainPM, trainSM, inspect)  # , self.TA, self.TA3)
             else:
-                w_u = self.hop(S, w_u, self.A1, self.A2, trainPM, trainSM, inspect, last_hop=self.hops == 1)  # , self.TA, self.TA3)
+                w_u = self.hop(S, w_u, self.A1, self.A2, trainPM, trainSM, inspect, last_hop=self.hops == 1, positional=positional)  # , self.TA, self.TA3)
                 #w_u = self.hop(S, w_u, self.A3, self.A3, trainPM, trainSM, inspect)  # , self.TA, self.TA3)
 
         #if self.hops >= 3:
@@ -185,9 +188,9 @@ class N2N(torch.nn.Module):
         else:
             return out
 
-    def hop(self, trainS, u_k_1, A_k, C_k, PM, SM, inspect, last_hop):  # , temp_A_k, temp_C_k):
-        mem_emb_A = self.embed_story(trainS, A_k, SM)
-        mem_emb_C = self.embed_story(trainS, C_k, SM)
+    def hop(self, trainS, u_k_1, A_k, C_k, PM, SM, inspect, last_hop, positional):  # , temp_A_k, temp_C_k):
+        mem_emb_A = self.embed_story(trainS, A_k, SM, positional)
+        mem_emb_C = self.embed_story(trainS, C_k, SM, positional)
 
         mem_emb_A_temp = mem_emb_A  # + temp_A_k
         mem_emb_C_temp = mem_emb_C  # + temp_C_k

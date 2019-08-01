@@ -34,6 +34,10 @@ def train_network(train_batches_id, val_batches_id, test_batches_id, data, val_d
         net = QueryClassifier(args.batch_size, args.embed_size, vocab_size, args=args, word_idx=word_idx, output_size=output_size)
     else:
         net = N2N(args.batch_size, args.embed_size, vocab_size, args.hops, story_size=story_size, args=args, word_idx=word_idx, output_size=output_size)
+        if args.dataset == "clicr" and args.mode == "win":
+            positional = False
+
+
     if torch.cuda.is_available() and args.cuda == 1:
         net = net.cuda()
     #criterion = torch.nn.CrossEntropyLoss()
@@ -73,11 +77,11 @@ def train_network(train_batches_id, val_batches_id, test_batches_id, data, val_d
         elif args.mode == "kv":
             k_size = sentence_size
             train_batch_gen = vectorized_batches_kv(train_batches_id, data, word_idx, k_size, story_size,
-                                                 output_size, output_idx, vectorizer, shuffle=args.shuffle)
+                                                    output_size, output_idx, vectorizer, shuffle=args.shuffle)
         elif args.mode == "win" or args.mode == "queryclassifier":
             win_size = sentence_size
             train_batch_gen = vectorized_batches_win(train_batches_id, data, word_idx, win_size, story_size,
-                                                    output_size, vectorizer, shuffle=args.shuffle)
+                                                     output_size, output_idx, vectorizer, shuffle=args.shuffle)
         current_len = 0
         current_correct = 0
         print("training...")
@@ -85,7 +89,7 @@ def train_network(train_batches_id, val_batches_id, test_batches_id, data, val_d
             if args.mode == "kv":
                 idx_out, idx_true, out, att_probs = epoch_kv(batch, net, args.inspect, positional)
             else:
-                idx_out, idx_true, out, att_probs = epoch(batch, net, args.inspect)
+                idx_out, idx_true, out, att_probs = epoch(batch, net, args.inspect, positional)
 
             #if current_epoch == args.epochs - 1 and args.inspect and n_inspect < max_inspect:
             if args.inspect and n_inspect < max_inspect:
@@ -110,7 +114,7 @@ def train_network(train_batches_id, val_batches_id, test_batches_id, data, val_d
             elif args.mode == "win" or args.mode == "queryclassifier":
                 val_acc, val_cor, val_tot = calculate_loss_and_accuracy_win(net, val_batches_id, val_data, word_idx,
                                                                            sentence_size, story_size,
-                                                                           output_size, vectorizer, args.inspect)
+                                                                           output_size, output_idx, vectorizer, args.inspect)
             else:
                 val_acc, val_cor, val_tot = calculate_loss_and_accuracy(net, val_batches_id, val_data, word_idx,
                                                                     sentence_size, story_size,
@@ -128,7 +132,7 @@ def train_network(train_batches_id, val_batches_id, test_batches_id, data, val_d
         running_loss = 0.0
 
 
-def epoch(batch, net, inspect=False):
+def epoch(batch, net, inspect=False, positional=True):
     story_batch = batch[0]
     query_batch = batch[1]
     answer_batch = batch[2]
@@ -149,9 +153,9 @@ def epoch(batch, net, inspect=False):
     QM = torch.stack(querymask_batch, dim=0) if querymask_batch is not None else None
 
     if inspect:
-        out, att_probs = net(S, Q, VM, PM, SM, QM, inspect)
+        out, att_probs = net(S, Q, VM, PM, SM, QM, inspect, positional=positional)
     else:
-        out = net(S, Q, VM, PM, SM, QM, inspect)
+        out = net(S, Q, VM, PM, SM, QM, inspect, positional=positional)
 
     _, idx_out = torch.max(out, 1)
     return idx_out, idx_true, out, att_probs if inspect else None
@@ -211,8 +215,8 @@ def calculate_loss_and_accuracy(net, batches_id, data, word_idx, sentence_size, 
     return 100 * (current_correct / current_len), current_correct, current_len
 
 
-def calculate_loss_and_accuracy_win(net, batches_id, data, word_idx, sentence_size, story_size, output_size, vectorizer, inspect=False):
-    batch_gen = vectorized_batches_win(batches_id, data, word_idx, sentence_size, story_size, output_size, vectorizer)
+def calculate_loss_and_accuracy_win(net, batches_id, data, word_idx, sentence_size, story_size, output_size, output_idx, vectorizer, inspect=False):
+    batch_gen = vectorized_batches_win(batches_id, data, word_idx, sentence_size, story_size, output_size,  output_idx, vectorizer)
     current_len = 0
     current_correct = 0
     for batch in batch_gen:
@@ -246,7 +250,8 @@ def eval_network(vocab_size, story_size, sentence_size, model, word_idx, output_
     if args.mode not in {"win", "queryclassifier"}:
         inv_output_idx = {v: k for k, v in output_idx.items()}
     elif (args.mode == "win" or args.mode == "queryclassifier") and args.dataset == "clicr":
-        inv_output_idx = {v: k for k, v in word_idx.items()}
+        #inv_output_idx = {v: k for k, v in word_idx.items()}
+        inv_output_idx = {v: k for k, v in output_idx.items()}
     if args.inspect:
         n_inspect = 0
 
@@ -278,7 +283,7 @@ def eval_network(vocab_size, story_size, sentence_size, model, word_idx, output_
                                                 output_size, output_idx, vectorizer, shuffle=args.shuffle)
     elif args.mode == "win" or args.mode == "queryclassifier":
         test_batch_gen = vectorized_batches_win(test_batches_id, test, word_idx, sentence_size, story_size, output_size,
-                                             vectorizer, shuffle=args.shuffle)
+                                                output_idx, vectorizer, shuffle=args.shuffle)
 
     current_len = 0
     current_correct = 0
@@ -302,10 +307,16 @@ def eval_network(vocab_size, story_size, sentence_size, model, word_idx, output_
         if preds is not None:
             for c, i in enumerate(idx_out):
                 # {query_id: answer}
+                if args.anonymize:
+                    q_id, inv_entity_dict = test[s_batch + c][5]
+                else:
+                    q_id = test[s_batch + c][5]
                 ans_pred = inv_output_idx[i.item()]
+                if args.anonymize:
+                    ans_pred = inv_entity_dict[ans_pred]
                 #if not ans_pred.startswith("@ent"):
                 #    print(inv_output_idx[i.item()])
-                preds[test[s_batch+c][5]] = deentitize(ans_pred) if ans_pred.startswith("@ent") else ans_pred
+                preds[q_id] = deentitize(ans_pred) if ans_pred.startswith("@ent") else ans_pred
         current_correct, current_len = update_counts(current_correct, current_len, idx_out, idx_true)
     # clicr detailed evaluation
     if args.dataset=="clicr":
@@ -397,6 +408,7 @@ def main():
                             help="anneal every [anneal-epoch] epoch, default: 25")
     arg_parser.add_argument("--anneal-factor", type=int, default=2,
                             help="factor to anneal by every 'anneal-epoch(s)', default: 2")
+    arg_parser.add_argument("--anonymize", action="store_true", help="Performs anonymization of entities, as in SA reader on CNN. Works for Clicr+win only")
     arg_parser.add_argument("--average-embs", type=int, default=1, help="Flag to average context embs instead of summing.")
     arg_parser.add_argument("--batch-size", type=int, default=32, help="batch size for training, default: 32")
     arg_parser.add_argument("--cuda", type=int, default=0, help="train on GPU, default: 0")
@@ -434,8 +446,10 @@ def main():
     arg_parser.add_argument("--train", type=int, default=1)
     arg_parser.add_argument("--win-size-kv", type=int, default=3, help="Size of the key window for one side.")
 
-
     args = arg_parser.parse_args()
+    if args.anonymize:
+        if not (args.mode == "win" and args.dataset == "clicr"):
+            sys.exit("Anonymization works only for clicr+win")
     if args.dataset == "clicr" and args.eval==1: # load all gold query ids in the test
         test_q_ids = get_q_ids_clicr(args.data_dir + "/test1.0.json")
     else:
@@ -524,7 +538,7 @@ def main():
                 eval_network(vocab_size, story_size, k_size, model, word_idx, output_size, output_idx, test_batches_id, test_data, log, logdir, args, cuda=args.cuda, test_q_ids=test_q_ids, ignore_missing_preds=args.ignore_missing_preds)
         elif args.mode == "win" or args.mode == "queryclassifier":
             # load data
-            data, val_data, test_data, sentence_size, vocab_size, story_size, word_idx = process_data_clicr_win(
+            data, val_data, test_data, sentence_size, vocab_size, story_size, word_idx, output_size, output_idx = process_data_clicr_win(
                 args, log=log)
             if args.pretrained_word_embed:
                 log.info("Using pretrained word embeddings: {}".format(args.pretrained_word_embed))
@@ -544,16 +558,23 @@ def main():
                 zip(range(0, n_test - args.batch_size, args.batch_size),
                     range(args.batch_size, n_test, args.batch_size)))
             if args.train == 1:
+                #train_network(train_batches_id, val_batches_id, test_batches_id, data, val_data, test_data, word_idx,
+                #              sentence_size, story_size=story_size,
+                #              vocab_size=vocab_size, output_size=vocab_size, output_idx=None,
+                #              save_model_path=save_model_path, args=args, log=log)
                 train_network(train_batches_id, val_batches_id, test_batches_id, data, val_data, test_data, word_idx,
                               sentence_size, story_size=story_size,
-                              vocab_size=vocab_size, output_size=vocab_size, output_idx=None,
+                              vocab_size=vocab_size, output_size=output_size, output_idx=output_idx,
                               save_model_path=save_model_path, args=args, log=log)
             if args.eval == 1:
                 if args.train == 1:
                     model = save_model_path
                 else:
                     model = args.load_model_path
-                eval_network(vocab_size, story_size, sentence_size, model, word_idx, vocab_size, None, test_batches_id,
+                #eval_network(vocab_size, story_size, sentence_size, model, word_idx, vocab_size, None, test_batches_id,
+                #             test_data, log, logdir, args, cuda=args.cuda, test_q_ids=test_q_ids,
+                #             ignore_missing_preds=args.ignore_missing_preds)
+                eval_network(vocab_size, story_size, sentence_size, model, word_idx, output_size, output_idx, test_batches_id,
                              test_data, log, logdir, args, cuda=args.cuda, test_q_ids=test_q_ids,
                              ignore_missing_preds=args.ignore_missing_preds)
 

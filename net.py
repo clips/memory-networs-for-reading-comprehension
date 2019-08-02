@@ -11,7 +11,7 @@ from util import get_position_encoding, long_tensor_type, load_emb, float_tensor
 
 
 class N2N(torch.nn.Module):
-    def __init__(self, batch_size, embed_size, vocab_size, hops, story_size, args, word_idx, output_size, hard_att_feat, att_only_out):
+    def __init__(self, batch_size, embed_size, vocab_size, hops, story_size, args, word_idx, output_size, use_att_feat, hard_att_feat, att_only_out):
         super(N2N, self).__init__()
 
         self.embed_size = embed_size
@@ -24,6 +24,7 @@ class N2N(torch.nn.Module):
         self.inv_word_idx = {v: k for k, v in word_idx.items()}
         self.args = args
         self.output_size = output_size
+        self.use_att_feat = use_att_feat
         self.hard_att_feat = hard_att_feat  # whether to use hard or soft attention feature at output
         self.att_only_out = att_only_out  # whether to use only attention feature at output, without any aggregated output vector
 
@@ -144,18 +145,18 @@ class N2N(torch.nn.Module):
             normalizer[normalizer==0.] = float("Inf")
             queries_rep = queries_rep / normalizer
         if inspect:
-            w_u, att_probs = self.hop(S, queries_rep, self.A1, self.A2, trainPM, trainSM, inspect, last_hop=self.hops == 1, positional=positional, hard_att_feat=self.hard_att_feat, att_only_out=self.att_only_out)  # , self.TA, self.TA2)
+            w_u, att_probs = self.hop(S, queries_rep, self.A1, self.A2, trainPM, trainSM, inspect, last_hop=self.hops == 1, positional=positional, use_att_feat=self.use_att_feat, hard_att_feat=self.hard_att_feat, att_only_out=self.att_only_out)  # , self.TA, self.TA2)
             #w_u, att_probs = self.hop(S, queries_rep, self.A1, self.A1, trainPM, trainSM, inspect)  # , self.TA, self.TA2)
         else:
-            w_u = self.hop(S, queries_rep, self.A1, self.A2, trainPM, trainSM, inspect, last_hop=self.hops == 1, positional=positional, hard_att_feat=self.hard_att_feat, att_only_out=self.att_only_out)  # , self.TA, self.TA2)
+            w_u = self.hop(S, queries_rep, self.A1, self.A2, trainPM, trainSM, inspect, last_hop=self.hops == 1, positional=positional, use_att_feat=self.use_att_feat, hard_att_feat=self.hard_att_feat, att_only_out=self.att_only_out)  # , self.TA, self.TA2)
             #w_u = self.hop(S, queries_rep, self.A1, self.A1, trainPM, trainSM, inspect)  # , self.TA, self.TA2)
 
         if self.hops >= 2:
             if inspect:
-                w_u, att_probs = self.hop(S, w_u, self.A1, self.A2, trainPM, trainSM, inspect, last_hop=self.hops == 1, positional=positional, hard_att_feat=self.hard_att_feat, att_only_out=self.att_only_out)  # , self.TA, self.TA3)
+                w_u, att_probs = self.hop(S, w_u, self.A1, self.A2, trainPM, trainSM, inspect, last_hop=self.hops == 1, positional=positional, use_att_feat=self.use_att_feat, hard_att_feat=self.hard_att_feat, att_only_out=self.att_only_out)  # , self.TA, self.TA3)
                 #w_u, att_probs = self.hop(S, w_u, self.A3, self.A3, trainPM, trainSM, inspect)  # , self.TA, self.TA3)
             else:
-                w_u = self.hop(S, w_u, self.A1, self.A2, trainPM, trainSM, inspect, last_hop=self.hops == 1, positional=positional, hard_att_feat=self.hard_att_feat, att_only_out=self.att_only_out)  # , self.TA, self.TA3)
+                w_u = self.hop(S, w_u, self.A1, self.A2, trainPM, trainSM, inspect, last_hop=self.hops == 1, positional=positional, use_att_feat=self.use_att_feat, hard_att_feat=self.hard_att_feat, att_only_out=self.att_only_out)  # , self.TA, self.TA3)
                 #w_u = self.hop(S, w_u, self.A3, self.A3, trainPM, trainSM, inspect)  # , self.TA, self.TA3)
 
         #if self.hops >= 3:
@@ -195,7 +196,7 @@ class N2N(torch.nn.Module):
         else:
             return out
 
-    def hop(self, trainS, u_k_1, A_k, C_k, PM, SM, inspect, last_hop, positional, hard_att_feat=True, att_only_out=True):  # , temp_A_k, temp_C_k):
+    def hop(self, trainS, u_k_1, A_k, C_k, PM, SM, inspect, last_hop, positional, use_att_feat=True, hard_att_feat=True, att_only_out=True):  # , temp_A_k, temp_C_k):
         mem_emb_A = self.embed_story(trainS, A_k, SM, positional)
         mem_emb_C = self.embed_story(trainS, C_k, SM, positional)
 
@@ -247,7 +248,13 @@ class N2N(torch.nn.Module):
                                 break
                         att_feat[b, idx] += probabs[b,n].item()
 
-            out = att_feat if att_only_out else torch.cat((o, u_k_1, o+u_k_1, o*u_k_1, att_feat), dim=1)
+            if use_att_feat:
+                if att_only_out:
+                    out = att_feat
+                else:
+                    out = torch.cat((o, u_k_1, o+u_k_1, o*u_k_1, att_feat), dim=1)
+            else:
+                out = torch.cat((o, u_k_1, o + u_k_1, o * u_k_1), dim=1)
             if inspect:
                 return out, probabs
             else:

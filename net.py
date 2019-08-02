@@ -11,7 +11,7 @@ from util import get_position_encoding, long_tensor_type, load_emb, float_tensor
 
 
 class N2N(torch.nn.Module):
-    def __init__(self, batch_size, embed_size, vocab_size, hops, story_size, args, word_idx, output_size):
+    def __init__(self, batch_size, embed_size, vocab_size, hops, story_size, args, word_idx, output_size, hard_att_feat, att_only_out):
         super(N2N, self).__init__()
 
         self.embed_size = embed_size
@@ -24,6 +24,8 @@ class N2N(torch.nn.Module):
         self.inv_word_idx = {v: k for k, v in word_idx.items()}
         self.args = args
         self.output_size = output_size
+        self.hard_att_feat = hard_att_feat  # whether to use hard or soft attention feature at output
+        self.att_only_out = att_only_out  # whether to use only attention feature at output, without any aggregated output vector
 
         if self.hops <= 0:
             raise ValueError("Number of hops have to be greater than 0")
@@ -105,7 +107,10 @@ class N2N(torch.nn.Module):
         #self.lin_bn = nn.BatchNorm1d(4*embed_size)
         self.cos = nn.CosineSimilarity(dim=2)
         #self.lin = nn.Linear(embed_size*4, embed_size)
-        self.lin_final = nn.Linear(embed_size*4+output_size, output_size)
+
+        input_size = output_size if att_only_out else embed_size*4+output_size
+        self.lin_final = nn.Linear(input_size, output_size)
+
         #self.lin_final = nn.Linear(embed_size, output_size)
         #self.lin_final = nn.Linear(embed_size, vocab_size)
         #self.lin_final.weight = nn.Parameter(self.A1.weight)
@@ -139,18 +144,18 @@ class N2N(torch.nn.Module):
             normalizer[normalizer==0.] = float("Inf")
             queries_rep = queries_rep / normalizer
         if inspect:
-            w_u, att_probs = self.hop(S, queries_rep, self.A1, self.A2, trainPM, trainSM, inspect, last_hop=self.hops == 1, positional=positional)  # , self.TA, self.TA2)
+            w_u, att_probs = self.hop(S, queries_rep, self.A1, self.A2, trainPM, trainSM, inspect, last_hop=self.hops == 1, positional=positional, hard_att_feat=self.hard_att_feat, att_only_out=self.att_only_out)  # , self.TA, self.TA2)
             #w_u, att_probs = self.hop(S, queries_rep, self.A1, self.A1, trainPM, trainSM, inspect)  # , self.TA, self.TA2)
         else:
-            w_u = self.hop(S, queries_rep, self.A1, self.A2, trainPM, trainSM, inspect, last_hop=self.hops == 1, positional=positional)  # , self.TA, self.TA2)
+            w_u = self.hop(S, queries_rep, self.A1, self.A2, trainPM, trainSM, inspect, last_hop=self.hops == 1, positional=positional, hard_att_feat=self.hard_att_feat, att_only_out=self.att_only_out)  # , self.TA, self.TA2)
             #w_u = self.hop(S, queries_rep, self.A1, self.A1, trainPM, trainSM, inspect)  # , self.TA, self.TA2)
 
         if self.hops >= 2:
             if inspect:
-                w_u, att_probs = self.hop(S, w_u, self.A1, self.A2, trainPM, trainSM, inspect, last_hop=self.hops == 1, positional=positional)  # , self.TA, self.TA3)
+                w_u, att_probs = self.hop(S, w_u, self.A1, self.A2, trainPM, trainSM, inspect, last_hop=self.hops == 1, positional=positional, hard_att_feat=self.hard_att_feat, att_only_out=self.att_only_out)  # , self.TA, self.TA3)
                 #w_u, att_probs = self.hop(S, w_u, self.A3, self.A3, trainPM, trainSM, inspect)  # , self.TA, self.TA3)
             else:
-                w_u = self.hop(S, w_u, self.A1, self.A2, trainPM, trainSM, inspect, last_hop=self.hops == 1, positional=positional)  # , self.TA, self.TA3)
+                w_u = self.hop(S, w_u, self.A1, self.A2, trainPM, trainSM, inspect, last_hop=self.hops == 1, positional=positional, hard_att_feat=self.hard_att_feat, att_only_out=self.att_only_out)  # , self.TA, self.TA3)
                 #w_u = self.hop(S, w_u, self.A3, self.A3, trainPM, trainSM, inspect)  # , self.TA, self.TA3)
 
         #if self.hops >= 3:
@@ -190,7 +195,7 @@ class N2N(torch.nn.Module):
         else:
             return out
 
-    def hop(self, trainS, u_k_1, A_k, C_k, PM, SM, inspect, last_hop, positional):  # , temp_A_k, temp_C_k):
+    def hop(self, trainS, u_k_1, A_k, C_k, PM, SM, inspect, last_hop, positional, hard_att_feat=True, att_only_out=True):  # , temp_A_k, temp_C_k):
         mem_emb_A = self.embed_story(trainS, A_k, SM, positional)
         mem_emb_C = self.embed_story(trainS, C_k, SM, positional)
 
@@ -217,24 +222,36 @@ class N2N(torch.nn.Module):
         #u_k = torch.squeeze(o) #+ torch.squeeze(u_k_1)
         #return u_k
         if last_hop:
-
-            # attention feature: one-hot argmax which will be passed to the output layer
             att_feat = torch.zeros(probabs.size(0), self.output_size, device="cuda")
-            max_win_ids = torch.argmax(probabs, dim=1)  # b*
-            max_wins = trainS[range(probabs.size(0)), max_win_ids]  # b*win_size
-            for b, win in enumerate(max_wins):
-                idx = None
-                for w in win:
-                    if self.inv_word_idx[w.item()].startswith("@entity"):
-                        idx = int(self.inv_word_idx[w.item()][len("@entity"):])
-                        break
-                assert idx is not None
-                att_feat[b, idx] = 1.
-
-            if inspect:
-                return torch.cat((o, u_k_1, o+u_k_1, o*u_k_1, att_feat), dim=1), probabs
+            if hard_att_feat:
+                # attention feature: one-hot argmax which will be passed to the output layer
+                max_win_ids = torch.argmax(probabs, dim=1)  # b*
+                max_wins = trainS[range(probabs.size(0)), max_win_ids]  # b*win_size
+                for b, win in enumerate(max_wins):
+                    idx = None
+                    for w in win:
+                        if self.inv_word_idx[w.item()].startswith("@entity"):
+                            idx = int(self.inv_word_idx[w.item()][len("@entity"):])
+                            break
+                    assert idx is not None
+                    att_feat[b, idx] = 1.
             else:
-                return torch.cat((o, u_k_1, o+u_k_1, o*u_k_1, att_feat), dim=1)
+                for b, wins in enumerate(trainS):
+                    for n, win in enumerate(wins):
+                        idx = None
+                        for w in win:
+                            if w.item() == 0:
+                                continue
+                            if self.inv_word_idx[w.item()].startswith("@entity"):
+                                idx = int(self.inv_word_idx[w.item()][len("@entity"):])
+                                break
+                        att_feat[b, idx] += probabs[b,n].item()
+
+            out = att_feat if att_only_out else torch.cat((o, u_k_1, o+u_k_1, o*u_k_1, att_feat), dim=1)
+            if inspect:
+                return out, probabs
+            else:
+                return out
         else:
             return torch.squeeze(self.G(o)) + torch.squeeze(u_k_1)
 

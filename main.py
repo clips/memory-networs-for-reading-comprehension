@@ -33,7 +33,7 @@ def train_network(train_batches_id, val_batches_id, test_batches_id, data, val_d
     elif args.mode == "queryclassifier":
         net = QueryClassifier(args.batch_size, args.embed_size, vocab_size, args=args, word_idx=word_idx, output_size=output_size)
     else:
-        net = N2N(args.batch_size, args.embed_size, vocab_size, args.hops, story_size=story_size, args=args, word_idx=word_idx, output_size=output_size)
+        net = N2N(args.batch_size, args.embed_size, vocab_size, args.hops, story_size=story_size, args=args, word_idx=word_idx, output_size=output_size, no_aggregate=args.no_aggregate, use_att_feat=args.use_att_feat, hard_att_feat=args.hard_att_feat, att_only_out=args.att_only_out)
         if args.dataset == "clicr" and args.mode == "win":
             positional = False
 
@@ -245,7 +245,7 @@ def eval_network(vocab_size, story_size, sentence_size, model, word_idx, output_
         net = QueryClassifier(args.batch_size, args.embed_size, vocab_size, args=args,
                   word_idx=word_idx, output_size=output_size)
     else:
-        net = N2N(args.batch_size, args.embed_size, vocab_size, args.hops, story_size=story_size, args=args, word_idx=word_idx, output_size=output_size)
+        net = N2N(args.batch_size, args.embed_size, vocab_size, args.hops, story_size=story_size, args=args, word_idx=word_idx, output_size=output_size, no_aggregate=args.no_aggregate, use_att_feat=args.use_att_feat, hard_att_feat=args.hard_att_feat, att_only_out=args.att_only_out)
     net.load_state_dict(torch.load(model))
     if args.mode not in {"win", "queryclassifier"}:
         inv_output_idx = {v: k for k, v in output_idx.items()}
@@ -403,12 +403,13 @@ def inspect_kv(out, idx_true, fig_dir, current_epoch, n, att_probs, inv_output_i
 
 def main():
     arg_parser = argparse.ArgumentParser(description="parser for End-to-End Memory Networks")
-
+    arg_parser.add_argument("--no-aggregate", action="store_true")
     arg_parser.add_argument("--anneal-epoch", type=int, default=25,
                             help="anneal every [anneal-epoch] epoch, default: 25")
     arg_parser.add_argument("--anneal-factor", type=int, default=2,
                             help="factor to anneal by every 'anneal-epoch(s)', default: 2")
     arg_parser.add_argument("--anonymize", action="store_true", help="Performs anonymization of entities, as in SA reader on CNN. Works for Clicr+win only")
+    arg_parser.add_argument("--att-only-out", action="store_true")
     arg_parser.add_argument("--average-embs", type=int, default=1, help="Flag to average context embs instead of summing.")
     arg_parser.add_argument("--batch-size", type=int, default=32, help="batch size for training, default: 32")
     arg_parser.add_argument("--cuda", type=int, default=0, help="train on GPU, default: 0")
@@ -425,6 +426,7 @@ def main():
     arg_parser.add_argument("--exp-dir", type=str, default="/mnt/b5320167-5dbd-4498-bf34-173ac5338c8d/Datasets/memory-networks/experiments/", help="Experiments directory.")
     arg_parser.add_argument("--freeze-pretrained-word-embed", action="store_true",
                             help="will prevent the pretrained word embeddings from being updated")
+    arg_parser.add_argument("--hard-att-feat", action="store_true")
     arg_parser.add_argument("--hops", type=int, default=1, help="Number of hops to make: 1, 2 or 3; default: 1 ")
     arg_parser.add_argument("--ignore-missing-preds", action="store_true",
                             help="Whether to remove the missing predictions from the test during evaluation.")
@@ -444,6 +446,7 @@ def main():
     arg_parser.add_argument("--shuffle", action="store_true")
     arg_parser.add_argument("--task-number", type=int, default=19, help="Babi task to process, default: 19 path finding")
     arg_parser.add_argument("--train", type=int, default=1)
+    arg_parser.add_argument("--use-att-feat", action="store_true")
     arg_parser.add_argument("--win-size-kv", type=int, default=3, help="Size of the key window for one side.")
 
     args = arg_parser.parse_args()

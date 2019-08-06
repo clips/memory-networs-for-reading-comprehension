@@ -33,7 +33,7 @@ def train_network(train_batches_id, val_batches_id, test_batches_id, data, val_d
     elif args.mode == "queryclassifier":
         net = QueryClassifier(args.batch_size, args.embed_size, vocab_size, args=args, word_idx=word_idx, output_size=output_size)
     else:
-        net = N2N(args.batch_size, args.embed_size, vocab_size, args.hops, story_size=story_size, args=args, word_idx=word_idx, output_size=output_size, use_att_feat=args.use_att_feat, hard_att_feat=args.hard_att_feat, att_only_out=args.att_only_out)
+        net = N2N(args.batch_size, args.embed_size, vocab_size, args.hops, story_size=story_size, args=args, word_idx=word_idx, output_size=output_size, no_aggregate=args.no_aggregate, use_att_feat=args.use_att_feat, hard_att_feat=args.hard_att_feat, att_only_out=args.att_only_out)
         if args.dataset == "clicr" and args.mode == "win":
             positional = False
 
@@ -245,7 +245,7 @@ def eval_network(vocab_size, story_size, sentence_size, model, word_idx, output_
         net = QueryClassifier(args.batch_size, args.embed_size, vocab_size, args=args,
                   word_idx=word_idx, output_size=output_size)
     else:
-        net = N2N(args.batch_size, args.embed_size, vocab_size, args.hops, story_size=story_size, args=args, word_idx=word_idx, output_size=output_size, use_att_feat=args.use_att_feat, hard_att_feat=args.hard_att_feat, att_only_out=args.att_only_out)
+        net = N2N(args.batch_size, args.embed_size, vocab_size, args.hops, story_size=story_size, args=args, word_idx=word_idx, output_size=output_size, no_aggregate=args.no_aggregate, use_att_feat=args.use_att_feat, hard_att_feat=args.hard_att_feat, att_only_out=args.att_only_out)
     net.load_state_dict(torch.load(model))
     if args.mode not in {"win", "queryclassifier"}:
         inv_output_idx = {v: k for k, v in output_idx.items()}
@@ -403,6 +403,7 @@ def inspect_kv(out, idx_true, fig_dir, current_epoch, n, att_probs, inv_output_i
 
 def main():
     arg_parser = argparse.ArgumentParser(description="parser for End-to-End Memory Networks")
+    arg_parser.add_argument("--no-aggregate", action="store_true")
     arg_parser.add_argument("--anneal-epoch", type=int, default=25,
                             help="anneal every [anneal-epoch] epoch, default: 25")
     arg_parser.add_argument("--anneal-factor", type=int, default=2,

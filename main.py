@@ -34,7 +34,7 @@ def train_network(train_batches_id, val_batches_id, test_batches_id, data, val_d
         net = QueryClassifier(args.batch_size, args.embed_size, vocab_size, args=args, word_idx=word_idx, output_size=output_size)
     else:
         net = N2N(args.batch_size, args.embed_size, vocab_size, args.hops, story_size=story_size, args=args, word_idx=word_idx, output_size=output_size, no_aggregate=args.no_aggregate, use_att_feat=args.use_att_feat, hard_att_feat=args.hard_att_feat, att_only_out=args.att_only_out)
-        if args.dataset == "clicr" and args.mode == "win":
+        if args.mode == "win":
             positional = False
 
 
@@ -84,6 +84,8 @@ def train_network(train_batches_id, val_batches_id, test_batches_id, data, val_d
                                                      output_size, output_idx, vectorizer, shuffle=args.shuffle)
         current_len = 0
         current_correct = 0
+        #if args.inspect:
+        #    all_att_max = []
         print("training...")
         for batch, (s_batch, _) in tqdm(zip(train_batch_gen, train_batches_id), total=len(train_batches_id)):
             if args.mode == "kv":
@@ -92,13 +94,13 @@ def train_network(train_batches_id, val_batches_id, test_batches_id, data, val_d
                 idx_out, idx_true, out, att_probs = epoch(batch, net, args.inspect, positional)
 
             #if current_epoch == args.epochs - 1 and args.inspect and n_inspect < max_inspect:
-            if args.inspect and n_inspect < max_inspect:
-                if args.mode == "kv":
-                    inspect_kv(out, idx_true, os.path.dirname(save_model_path), current_epoch, s_batch, att_probs,
-                            inv_output_idx, data, args, log)
-                else:
-                    inspect(out, idx_true, os.path.dirname(save_model_path), current_epoch, s_batch, att_probs, inv_output_idx, data, args, log)
-                n_inspect += 1
+            #if args.inspect and n_inspect < max_inspect:
+                #if args.mode == "kv":
+                #    inspect_kv(out, idx_true, os.path.dirname(save_model_path), current_epoch, s_batch, att_probs, inv_output_idx, data, args, log)
+                #else:
+                    #inspect(out, idx_true, os.path.dirname(save_model_path), current_epoch, s_batch, att_probs, inv_output_idx, data, args, log)
+                    #all_att_max.append(list(att_probs.max(dim=1)[0].detach().cpu().numpy()))
+                #n_inspect += 1
             loss = criterion(out, idx_true)
             loss.backward()
             clip_grad_norm_(net.parameters(), 40)
@@ -154,11 +156,16 @@ def epoch(batch, net, inspect=False, positional=True):
 
     if inspect:
         out, att_probs = net(S, Q, VM, PM, SM, QM, inspect, positional=positional)
+        flat_att_ws = []
+        for b in range(att_probs.size(0)):
+            for s in range(att_probs.size(1)):
+                if PM[b,s] == 1.:
+                    flat_att_ws.append(att_probs[b,s].item())
     else:
         out = net(S, Q, VM, PM, SM, QM, inspect, positional=positional)
 
     _, idx_out = torch.max(out, 1)
-    return idx_out, idx_true, out, att_probs if inspect else None
+    return idx_out, idx_true, out, (att_probs, flat_att_ws) if inspect else None
 
 
 def epoch_kv(batch, net, inspect=False, positional=True):
@@ -246,6 +253,8 @@ def eval_network(vocab_size, story_size, sentence_size, model, word_idx, output_
                   word_idx=word_idx, output_size=output_size)
     else:
         net = N2N(args.batch_size, args.embed_size, vocab_size, args.hops, story_size=story_size, args=args, word_idx=word_idx, output_size=output_size, no_aggregate=args.no_aggregate, use_att_feat=args.use_att_feat, hard_att_feat=args.hard_att_feat, att_only_out=args.att_only_out)
+        if args.mode == "win":
+            positional = False
     net.load_state_dict(torch.load(model))
     if args.mode not in {"win", "queryclassifier"}:
         inv_output_idx = {v: k for k, v in output_idx.items()}
@@ -287,19 +296,23 @@ def eval_network(vocab_size, story_size, sentence_size, model, word_idx, output_
 
     current_len = 0
     current_correct = 0
+    if args.inspect:
+        all_att_max = []
+        all_flat_att_ws = []
     preds = {} if args.dataset == "clicr" else None
 
     for batch, (s_batch, _) in zip(test_batch_gen, test_batches_id):
         if args.mode == "kv":
             idx_out, idx_true, out, att_probs = epoch_kv(batch, net, args.inspect, positional)
         else:
-            idx_out, idx_true, out, att_probs = epoch(batch, net, args.inspect)
-        if args.inspect and n_inspect < max_inspect:
+            idx_out, idx_true, out, (att_probs, flat_att_ws) = epoch(batch, net, args.inspect, positional)
+        if args.inspect:# and n_inspect < max_inspect:
             if args.mode == "kv":
                 inspect_kv(out, idx_true, logdir, "eval", s_batch, att_probs,
                            inv_output_idx, test, args, log)
             elif args.mode == "win" or args.mode == "queryclassifier":
-                raise NotImplementedError
+                all_att_max.extend(list(att_probs.max(dim=1)[0].detach().cpu().numpy()))
+                all_flat_att_ws.extend(flat_att_ws)
             else:
                 inspect(out, idx_true, logdir, "eval", s_batch, att_probs,
                         inv_output_idx, test, args, log)
@@ -318,6 +331,16 @@ def eval_network(vocab_size, story_size, sentence_size, model, word_idx, output_
                 #    print(inv_output_idx[i.item()])
                 preds[q_id] = deentitize(ans_pred) if ans_pred.startswith("@ent") else ans_pred
         current_correct, current_len = update_counts(current_correct, current_len, idx_out, idx_true)
+
+    if args.inspect:
+        print("Average maximum attention probability: {}".format(np.mean(all_att_max)))
+        print("Absolute variance from the mean: {}".format(np.sum(np.abs(np.mean(all_att_max) - all_att_max)) / len(all_att_max)))
+        print("Sample maximum probabilities: {}".format(all_att_max[:100]))
+        np.save(logdir + "/all_att_max", all_att_max)
+        with open(logdir + "/all_flat_att_ws", "w") as out_f:
+            for i in sorted(all_flat_att_ws):
+                out_f.write(str(i)+"\n")
+
     # clicr detailed evaluation
     if args.dataset=="clicr":
         missing = test_q_ids - preds.keys()
@@ -403,7 +426,6 @@ def inspect_kv(out, idx_true, fig_dir, current_epoch, n, att_probs, inv_output_i
 
 def main():
     arg_parser = argparse.ArgumentParser(description="parser for End-to-End Memory Networks")
-    arg_parser.add_argument("--no-aggregate", action="store_true")
     arg_parser.add_argument("--anneal-epoch", type=int, default=25,
                             help="anneal every [anneal-epoch] epoch, default: 25")
     arg_parser.add_argument("--anneal-factor", type=int, default=2,
@@ -440,6 +462,7 @@ def main():
     arg_parser.add_argument("--max-n-load", type=int, help="maximum number of clicr documents to use, for debugging")
     arg_parser.add_argument("--memory-size", type=int, default=50, help="upper limit on memory size, default: 50")
     arg_parser.add_argument("--mode", type=str, default="standard", help="standard | kv | win | queryclassifier")
+    arg_parser.add_argument("--no-aggregate", action="store_true")
     arg_parser.add_argument("--pretrained-word-embed", type=str,
                             help="path to the txt file with word embeddings")  # "/nas/corpora/accumulate/clicr/embeddings/4bfb98c2-688e-11e7-aa74-901b0e5592c8/embeddings"
     arg_parser.add_argument("--save-model", action="store_true")

@@ -116,8 +116,8 @@ class N2N(torch.nn.Module):
             else:
                 input_size = embed_size * 4 + output_size
         else:
-            #input_size = embed_size * 4
-            input_size = embed_size
+            input_size = embed_size * 4
+            #input_size = embed_size
         self.lin_final = nn.Linear(input_size, output_size)
 
         #self.lin_final = nn.Linear(embed_size, output_size)
@@ -266,8 +266,8 @@ class N2N(torch.nn.Module):
                 else:
                     out = torch.cat((o, u_k_1, o+u_k_1, o*u_k_1, att_feat), dim=1)
             else:
-                #out = torch.cat((o, u_k_1, o + u_k_1, o * u_k_1), dim=1)
-                out = o + u_k_1
+                out = torch.cat((o, u_k_1, o + u_k_1, o * u_k_1), dim=1)
+                #out = o + u_k_1
             if inspect:
                 return out, probabs
             else:

@@ -1,4 +1,4 @@
-# End to End Memory Network
+# Memory networks for machine reading comprehension
 This repository contains a pytorch implementation of end-to-end memory networks (MemNNs) for machine reading comprehension. The implementation is based on this [repository](https://github.com/uditsaxena/examples/tree/master/memory_network_n2n).
 
 ## Requirements
